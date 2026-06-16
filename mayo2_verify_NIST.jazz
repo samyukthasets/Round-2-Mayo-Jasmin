@@ -1,0 +1,206 @@
+require "params.jinc"
+require "stream.jazz"
+require "shake256_lib.jazz"
+require "bitsliced_arith.jazz"
+require "ffarith.jazz"
+
+
+u8[F_TAIL_LEN] f_tail = {
+    0x08, 0x00, 0x02, 0x08
+};
+
+inline fn reduce_y_mod_fX(stack u8[2 * paramm] y) -> stack u8[2 * paramm] {
+    inline int i j;
+    reg u64 tmp tmp1;
+
+    for i = (paramm + paramk * (paramk + 1) / 2 - 2) downto paramm - 1 {
+        for j = 0 to 4 {
+            tmp  = (64u)y[i];
+            tmp1 = (64u)f_tail[j];
+            tmp  = gf16_mul(tmp, tmp1);
+            tmp1 = (64u)y[i - paramm + j];
+            tmp1 ^= tmp;
+            y[i - paramm + j] = tmp1;
+        }
+        y[i] = 0;
+    }
+
+    return y;
+}
+export fn mayo2_crypto_sign_open(reg u64 signed_message
+          message
+          message_length
+          public_key
+) -> reg u64{
+message = message;message_length= message_length;public_key= public_key;
+
+stack u8[param_sig_bytes] sm_8;
+ inline int is;
+for is = 0 to param_sig_bytes{
+        sm_8[is] = (u8)[signed_message + is];
+}
+
+
+
+
+
+stack u8[param_digest_bytes] tmp;
+() = #spill(message, message_length, signed_message);
+tmp = __shake256_32_x(tmp, message, message_length);
+() = #unspill(message, message_length, signed_message);
+
+
+
+
+
+stack u64[MAYO_2_pk_seed_bytes / 8 + MAYO_2_P3_bytes/8] cpk_64;
+
+   
+    for is = 0 to (MAYO_2_pk_seed_bytes / 8 + MAYO_2_P3_bytes/8){
+        cpk_64[is] = [public_key + is * 8];
+    }
+
+
+
+stack u64[(MAYO_2_P1_bytes + MAYO_2_P2_bytes)/8] bitsliced_P_64;
+stack u32[(MAYO_2_P1_bytes + MAYO_2_P2_bytes)/4] bitsliced_P;
+
+bitsliced_P_64 = aes128ctr(bitsliced_P_64, cpk_64[0: MAYO_2_pk_seed_bytes / 8 ]);
+bitsliced_P = #copy_64(bitsliced_P_64);
+
+
+stack u32[MAYO_2_P1_bytes / 4] bitsliced_P1v_p;
+bitsliced_P1v_p = bitsliced_P[0 : MAYO_2_P1_bytes / 4];
+
+stack u32[MAYO_2_P2_bytes / 4] bitsliced_P2v_p;
+bitsliced_P2v_p = bitsliced_P[MAYO_2_P1_bytes / 4 : MAYO_2_P2_bytes / 4];
+
+
+stack u32[MAYO_2_P3_bytes / 4] bitsliced_P3_s;
+reg ptr u64[MAYO_2_P3_bytes / 8] bitsliced_P3_64;
+bitsliced_P3_64 = cpk_64[MAYO_2_pk_seed_bytes / 8 : MAYO_2_P3_bytes / 8];
+bitsliced_P3_s = #copy_32(bitsliced_P3_64);
+
+
+
+
+stack u8[param_digest_bytes + param_salt_bytes] tmp_with_salt;
+tmp_with_salt[0:param_digest_bytes] = copy_32u8(tmp);
+tmp_with_salt[param_digest_bytes:param_salt_bytes] = copy_24u8(sm_8[param_sig_bytes - param_salt_bytes: param_salt_bytes]);
+
+
+
+
+stack u8[param_m_bytes] tEnc;
+tEnc = __shake256_32_56(tEnc, tmp_with_salt);
+
+stack u8[paramm] t_mat;
+t_mat = decode_o_tenc(tEnc, t_mat);
+
+
+
+
+stack u8[paramk * paramn] sans;
+
+sans = decode_sig(sm_8[0 : paramk * paramn / 2], sans);
+
+
+
+reg u64 ivv;
+stack u32[paramn * paramk * paramm / 8] bitsliced_PS;
+ivv = 0;
+while(ivv < paramn * paramk * paramm / 8){
+     bitsliced_PS[ivv] = 0;
+     ivv += 1;
+}
+
+
+stack u32[1824] bitsliced_P3_0;
+reg u64 ik; reg u32 tmpr;
+ik = 0;
+while(ik < MAYO_2_P3_bytes / 4){
+    tmpr = bitsliced_P3_s[ik];
+    bitsliced_P3_0[ik] = tmpr;
+    ik +=1;
+}
+while(ik < 1824){
+    bitsliced_P3_0[ik] = 0;
+    ik +=1;
+}
+
+
+bitsliced_PS = bitsliced_m_calculate_PS(bitsliced_P1v_p, bitsliced_P2v_p, bitsliced_P3_0, sans, bitsliced_PS);
+
+
+
+
+
+stack u32[paramk * paramk * paramm / 8 ] bitsliced_SPS;
+
+ivv = 0;
+while(ivv < paramk * paramk * paramm / 8 ){
+     bitsliced_SPS[ivv] = 0;
+     ivv += 1;
+}
+
+bitsliced_SPS = mul_add_mat_x_bitsliced_m_mat_ver(sans, bitsliced_PS, bitsliced_SPS);
+
+
+
+stack u32[paramk * (paramk + 1) * paramm / 16] bitsliced_SPS_upper;
+
+ivv = 0;
+while(ivv < paramk * (paramk + 1) * paramm / 16){
+     bitsliced_SPS_upper[ivv] = 0;
+     ivv += 1;
+}
+
+
+bitsliced_SPS_upper = bitsliced_m_upper(bitsliced_SPS, bitsliced_SPS_upper);
+
+
+stack u8[2 * paramm] y;
+inline int ii;
+for ii = 0 to 2 * paramm{
+     y[ii] = 0;
+}
+
+inline int ll i4 j4 pos;
+ll = 0;
+for i4 = 0 to paramk{
+     for j4 = (paramk - 1) downto (i4 - 1){
+          pos = (i4 * paramk + j4 - (i4 * (i4 + 1) / 2));
+
+          stack u8[paramm] temp_y; 
+          reg u8 temp3;
+
+          temp_y = unbitslice_m_vec(bitsliced_SPS_upper[ pos * (paramm / 8) : 8], temp_y);
+
+          inline int ks; reg u64 llks;
+          for ks = 0 to paramm{
+               temp3 = temp_y[ks];
+               llks = ll;
+               llks += ks;
+               y[llks] ^= temp3;
+          }
+          ll += 1;
+
+     }
+}
+
+y = reduce_y_mod_fX(y);
+
+
+reg u64 r; r = 0;
+inline int i; reg u8 ya, ta;
+for i = 0 to paramm{
+     ya = y[i];
+     ta = t_mat[i];
+     if(ya != ta){
+          r += 1;
+     }
+
+    }
+
+return r;
+}

@@ -1,0 +1,239 @@
+require "params.jinc"
+require "shake256_lib.jazz"
+require "bitsliced_arith.jazz"
+require "stream.jazz"
+require "keygen_functions.jazz"
+
+
+
+export fn mayo2_crypto_sign_keypair(reg u64 CPK, reg u64 CSK)->reg u64{
+CPK = CPK;
+CSK = CSK;
+  
+  stack u8[24] seed_sk;
+  reg ptr u8[24] seed_sk_p;
+  
+
+
+     seed_sk = #randombytes(seed_sk);
+ 
+      reg u64 ik; 
+
+     stack u64[3] CSK_64;
+     CSK_64 = #copy_64(seed_sk);
+
+    ik = 0;  
+    while(ik < (MAYO_2_CRYPTO_SECRETKEYBYTES * 8 /64) ){
+      [CSK + ik * 8] = CSK_64[ik];
+      ik+=1;
+    }
+    () = #spill(CSK, CPK);
+     seed_sk_p = seed_sk;
+
+     stack u8[MAYO_2_pk_seed_bytes + MAYO_2_O_bytes] S;
+
+     () = #spill(seed_sk_p);
+     S = __shake256_560_24(S, seed_sk_p);
+     () = #unspill(seed_sk_p);
+     
+
+
+     stack u8[2 * MAYO_2_O_bytes] mdec;
+     
+    
+     
+
+     mdec = decode_o(S[MAYO_2_pk_seed_bytes : MAYO_2_O_bytes], mdec);
+     
+
+     stack u64[2] seed_pk_64;
+      stack u8[MAYO_2_pk_seed_bytes] seed_pk;
+      reg u8 auxx;
+      ik = 0;
+   
+  while(ik < MAYO_2_pk_seed_bytes){
+      auxx = S[ik];
+      seed_pk[ik] = auxx;
+      ik+=1;
+  }
+
+seed_pk_64 = #copy_64(seed_pk) ; 
+
+
+stack u32[(MAYO_2_P1_bytes / 4)+(MAYO_2_P2_bytes / 4)] bitsliced_P;
+
+stack u64[(MAYO_2_P1_bytes / 8)+(MAYO_2_P2_bytes / 8)] bitsliced_P_64;
+
+bitsliced_P_64 = aes128ctr(bitsliced_P_64, seed_pk_64);
+bitsliced_P = #copy_64(bitsliced_P_64);
+
+
+
+
+
+stack u64[(MAYO_2_P1_bytes / 8)+(MAYO_2_P2_bytes / 8)] bitsliced_P_64;
+bitsliced_P_64 = aes128ctr(bitsliced_P_64, seed_pk_64);
+
+// keep original bytes in u8 stack buffer
+stack u8[MAYO_2_P1_bytes + MAYO_2_P2_bytes] bitsliced_P8_orig;
+bitsliced_P8_orig = #copy_64(bitsliced_P_64);
+
+// separate output buffer for pack_to_bitsliced
+stack u32[(MAYO_2_P1_bytes + MAYO_2_P2_bytes) / 4] bitsliced_P_converted;
+
+reg ptr u8[MAYO_2_P1_bytes + MAYO_2_P2_bytes] in_ptr;
+reg ptr u32[(MAYO_2_P1_bytes + MAYO_2_P2_bytes) / 4] out_ptr;
+
+in_ptr = bitsliced_P8_orig;
+out_ptr = bitsliced_P_converted;
+out_ptr = pack_to_bitsliced(in_ptr, out_ptr);
+
+// copy converted result into bitsliced_P
+stack u32[(MAYO_2_P1_bytes / 4)+(MAYO_2_P2_bytes / 4)] bitsliced_P;
+bitsliced_P = #copy_64(out_ptr);
+
+// debug print as u8
+stack u8[MAYO_2_P1_bytes + MAYO_2_P2_bytes] bitsliced_P_print;
+bitsliced_P_print = #copy_64(out_ptr);
+
+
+// slice into P1 and P2
+reg ptr u32[MAYO_2_P1_bytes / 4] bitsliced_P1_p;
+bitsliced_P1_p = bitsliced_P[0 : MAYO_2_P1_bytes / 4];
+
+
+
+reg ptr u32[MAYO_2_P2_bytes / 4] bitsliced_P1O_P2_p;
+bitsliced_P1O_P2_p = bitsliced_P[(MAYO_2_P1_bytes / 4) : (MAYO_2_P2_bytes / 4)];
+
+  
+  /////////P1_times_O////////
+  
+  inline int bs_mat_entries_used bs_mat_rows bs_mat_cols r cl triangular mat_cols;
+  
+  reg ptr u64[4] bs_mat_slice_p;
+  reg ptr u8[paramo] mat_slice_p;
+  reg ptr u64[68] acc_slice_p;
+
+ 
+  triangular = 1;
+  bs_mat_entries_used = 0;
+ 
+  bs_mat_rows =  paramv;
+  bs_mat_cols =  paramv;
+  mat_cols = paramo;
+ 
+
+   
+  for r = 0 to bs_mat_rows{
+    for cl = (triangular*r) to bs_mat_cols{
+    
+      bs_mat_slice_p = (bitsliced_P1_p[u64 4 * bs_mat_entries_used : 4]);      
+     
+      mat_slice_p = (mdec[u8 cl * paramo : paramo]);  
+      acc_slice_p = (bitsliced_P1O_P2_p[u64 68 * r : 68]);   
+      
+      acc_slice_p = process_k(bs_mat_slice_p, mat_slice_p, acc_slice_p);
+
+      bitsliced_P1O_P2_p[u64 68 * r : 68] = (acc_slice_p);
+
+      bs_mat_entries_used += 1;
+
+    }
+  }
+
+
+
+
+
+stack u32[paramo * paramo * paramm / 8] bitsliced_P3_s;
+
+ik = 0; 
+   while(ik<paramo * paramo * paramm / 8){
+     
+     bitsliced_P3_s[ik] = 0;
+     ik+=1;
+   }
+
+inline int mat_rows;
+
+mat_rows = paramv;
+mat_cols = paramo;
+bs_mat_cols = paramo;
+
+reg ptr u64[68] tbs_mat_slice_p;
+reg u8 mat_element;
+
+  for r = 0 to mat_cols{
+    for cl = 0 to mat_rows{
+
+     tbs_mat_slice_p = (bitsliced_P1O_P2_p[u64  4 * (cl * bs_mat_cols) : 68]);
+     
+      mat_element = mdec[cl * mat_cols + r];
+       
+      acc_slice_p = (bitsliced_P3_s[u64 4 * r * bs_mat_cols : 68]);
+      
+      acc_slice_p = process_k_trans(tbs_mat_slice_p, mat_element, acc_slice_p);
+
+      bitsliced_P3_s[u64 4 * r * bs_mat_cols : 68] = (acc_slice_p);
+
+    }
+  }
+
+
+ 
+
+stack u32[MAYO_2_P3_bytes / 4] bitsliced_P3_upper_s;
+reg ptr u32[paramo * paramo * 8] p3_in_ptr;
+reg ptr u32[MAYO_2_P3_bytes / 4] p3_out_ptr;
+
+p3_in_ptr = bitsliced_P3_s;
+p3_out_ptr = bitsliced_P3_upper_s;
+p3_out_ptr = bitsliced_m_upper_p3(p3_in_ptr, p3_out_ptr);
+bitsliced_P3_upper_s = p3_out_ptr;
+
+
+stack u8[MAYO_2_P3_bytes] p3_packed;
+reg ptr u32[MAYO_2_P3_bytes / 4] p3_upper_ptr;
+reg ptr u8[MAYO_2_P3_bytes] p3_packed_ptr;
+
+p3_upper_ptr = bitsliced_P3_upper_s;
+p3_packed_ptr = p3_packed;
+p3_packed_ptr = unbitslice_m_vecs(p3_upper_ptr, p3_packed_ptr);
+p3_packed = p3_packed_ptr;
+
+
+ik = 0; reg u64 tmp2;
+() = #unspill(CPK);
+   
+while(ik < (MAYO_2_pk_seed_bytes * 8 / 64)){
+      tmp2 = seed_pk_64[ik];
+      [CPK + ik * 8] = tmp2;
+      ik+=1;
+    }
+
+
+stack u64[MAYO_2_P3_bytes/8] p3_packed_64;
+
+() = #unspill(CPK);
+p3_packed_64 = #copy_64(p3_packed) ; 
+ik *= 8;
+CPK += ik;
+ik = 0;
+tmp2 = 0;
+  while(ik < ((MAYO_2_P3_bytes + MAYO_2_pk_seed_bytes)* 8 /64)){
+      
+      tmp2 = p3_packed_64[ik];
+      [CPK + ik * 8] = tmp2;
+      ik+=1;
+  }
+
+
+
+() = #unspill(CSK);
+
+reg u64 retv;
+retv = 0;
+  return retv;
+}
+
