@@ -1,5 +1,5 @@
 # Round-2-Mayo-Jasmin
-Bitsliced Jasmin Implementation of Mayo signature scheme
+Bitsliced Jasmin Implementation of Mayo signature scheme, compiled with **Jasmin Compiler 2025.06.3**
 
 
 # Compiling and Executing
@@ -15,7 +15,7 @@ make sign
 
 # Benchmarking of Mayo2 implementation
 
-Benchmarked based on the average of 100,000 runs of the implementation on a **2.25GHz x86_64 processor** with **256 GB RAM**.
+Benchmarked based on the average of 100 runs of the implementation on a **5.2GHz x86_64 processor** with **16 GB RAM**.
 
 | Scheme   | Public Key Size | Signature Size |
 |----------|-----------------|----------------|
